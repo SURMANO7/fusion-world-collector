@@ -217,8 +217,10 @@ function psaBaseMultiplier(raw) {
 }
 function psaEstimate(card, grade, basePrice) {
   if (!card || basePrice == null || !isFinite(basePrice) || basePrice <= 0) return null;
+  const ratio = PSA_RATIO[grade];
+  if (ratio == null) return null;   // notas fuera de la escala actual (p. ej. 9.5 antiguas)
   const p10 = basePrice * psaBaseMultiplier(basePrice);
-  return Math.max(0.5, Math.round(p10 * (PSA_RATIO[grade] || 1) * 100) / 100);
+  return Math.max(0.5, Math.round(p10 * ratio * 100) / 100);
 }
 function rawPriceOf(k, card) {
   const l = latest(k);
