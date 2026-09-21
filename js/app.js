@@ -205,8 +205,8 @@ function marketOf(prices, finish) {
 }
 
 // ---- valoración PSA (estimación con los multiplicadores actuales del mercado TCG) ----
-const PSA_GRADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 9.5, 10];
-const PSA_RATIO = { 1: 0.08, 2: 0.10, 3: 0.11, 4: 0.13, 5: 0.16, 6: 0.19, 7: 0.23, 8: 0.30, 9: 0.42, 9.5: 0.62, 10: 1 };
+const PSA_GRADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+const PSA_RATIO = { 1: 0.08, 2: 0.10, 3: 0.11, 4: 0.13, 5: 0.16, 6: 0.19, 7: 0.23, 8: 0.30, 9: 0.42, 10: 1 };
 function psaBaseMultiplier(raw) {
   if (raw < 3) return 5.0;        // cartas baratas: el PSA 10 se multiplica mucho
   if (raw < 10) return 3.8;
@@ -514,7 +514,7 @@ function psaSectionHTML(k, card) {
       <button class="btn primary" id="btnSavePsa">🎒 Guardar en mi cartera como PSA ${psaSel}</button>
       ${ownedPsa ? `<span class="psa-owned">En cartera: PSA ${ownedPsa.psa} ×${ownedPsa.q}</span>` : ''}
     </div>
-    <p class="muted" style="font-size:12px;margin-top:8px">Estimación orientativa con los multiplicadores actuales del mercado TCG (no es una valoración oficial). PSA no emite la nota 9.5 — es propia de BGS/SGC; se incluye como referencia.</p>`;
+    <p class="muted" style="font-size:12px;margin-top:8px">Estimación orientativa con los multiplicadores actuales del mercado TCG (no es una valoración oficial).</p>`;
 }
 function openModal(k) {
   const isNew = modalKey !== k;
