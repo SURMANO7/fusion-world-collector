@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Fusion World Coleccionista - archivo unico portable (generado 2026-09-21). La version con actualizacion diaria vive en la carpeta del proyecto. -->
+<!-- Fusion World Coleccionista - archivo unico portable (generado 2026-09-22). La version con actualizacion diaria vive en la carpeta del proyecto. -->
 <html lang="es">
 <head>
 <meta charset="UTF-8">
@@ -390,7 +390,7 @@ main { max-width: 1280px; margin: 0 auto; padding: 22px; }
         </div>
         <div class="scan-actions">
           <button id="btnCamStart" class="btn">ðŸŽ¥ Activar cÃ¡mara</button>
-          <button id="btnCamShot" class="btn primary" hidden>ðŸ“¸ Capturar y leer</button>
+          <button id="btnCamShot" class="btn primary" hidden>ðŸ“¸ Escanear</button>
           <label class="btn file-btn">ðŸ–¼ Subir foto de la carta<input type="file" id="fileScan" accept="image/*" hidden></label>
           <label class="btn file-btn">ðŸ–¼ Subir foto de varias cartas<input type="file" id="fileScanMulti" accept="image/*" multiple hidden></label>
         </div>
@@ -512,7 +512,7 @@ main { max-width: 1280px; margin: 0 auto; padding: 22px; }
     <p class="muted center" style="margin-top:16px">
       <a href="#" id="authGuest">Continuar como invitado</a> â€” se guarda igualmente, pero sin contraseÃ±a y compartido en este navegador.
     </p>
-    <p class="muted center" style="margin-top:6px;font-size:12px">Las cuentas son locales a este navegador/dispositivo. Usa Â«Exportar carteraÂ» en Ajustes para pasarla a otro PC.</p>
+    <p class="muted center" style="margin-top:6px;font-size:12px">âš  La cuenta se guarda <b>en este dispositivo y este navegador</b>: entra siempre desde el mismo navegador. La app local (index.html) y este enlace tienen cuentas separadas; usa Exportar/Importar en Ajustes para pasar tu cartera de uno a otro.</p>
   </div>
 </div>
 
@@ -536,55 +536,184 @@ window.FW_PRICES={"prices":{"683195":{"H":[13.5,22,15.2,59.98]},"636317":{"H":[0
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js" onerror="window.__noTesseract=true"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" onerror="window.__noChart=true"></script>
 <script>
-/* EscÃ¡ner de cartas: cÃ¡mara o foto subida + OCR (Tesseract.js) para leer el cÃ³digo impreso (p. ej. FB01-001). */
+/* EscÃ¡ner de cartas: cÃ¡mara o foto subida + OCR (Tesseract.js) para leer el cÃ³digo impreso (p. ej. FB01-001).
+   Optimizado para mÃ³vil: preprocesado de imagen, correcciÃ³n de caracteres que el OCR confunde
+   (Oâ†”0, Iâ†”1, Sâ†”5, Bâ†”8, Zâ†”2, Gâ†”6, Q/Dâ†”0, Lâ†”1) validada contra el catÃ¡logo real. */
 (function () {
 'use strict';
 
 let stream = null;
 let workerPromise = null;
+let shutterCtx = null;
 
 const $ = s => document.querySelector(s);
 
 function hasCameraAPI() { return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia); }
 
+// Sonido de disparo de cÃ¡mara sintetizado (sin archivos de audio): doble clic de obturador
+function shutterSound() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!shutterCtx) shutterCtx = new AC();
+    if (shutterCtx.state === 'suspended') shutterCtx.resume();
+    const t0 = shutterCtx.currentTime + 0.01;
+    const click = (t) => {
+      const dur = 0.07;
+      const buf = shutterCtx.createBuffer(1, Math.floor(shutterCtx.sampleRate * dur), shutterCtx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3);
+      const src = shutterCtx.createBufferSource();
+      src.buffer = buf;
+      const bp = shutterCtx.createBiquadFilter();
+      bp.type = 'bandpass'; bp.frequency.value = 3400; bp.Q.value = 0.7;
+      const g = shutterCtx.createGain();
+      g.gain.setValueAtTime(0.45, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      src.connect(bp); bp.connect(g); g.connect(shutterCtx.destination);
+      src.start(t);
+    };
+    click(t0);
+    click(t0 + 0.09);
+  } catch (e) { /* el sonido es opcional */ }
+}
+
+// Flash blanco breve sobre la vista de la cÃ¡mara
+function shutterFlash() {
+  try {
+    const zone = $('.scan-zone');
+    if (!zone) return;
+    let fl = document.getElementById('scanFlash');
+    if (!fl) {
+      fl = document.createElement('div');
+      fl.id = 'scanFlash';
+      fl.style.cssText = 'position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .28s ease;z-index:3';
+      zone.appendChild(fl);
+    }
+    fl.style.transition = 'none';
+    fl.style.opacity = '0.85';
+    requestAnimationFrame(() => {
+      fl.style.transition = 'opacity .3s ease';
+      fl.style.opacity = '0';
+    });
+  } catch (e) { /* opcional */ }
+}
+
 async function ensureWorker() {
-  if (!window.Tesseract || window.__noTesseract) throw new Error('OCR no disponible (sin conexiÃ³n). Escribe el cÃ³digo a mano o crea la carta como personalizada.');
+  if (!window.Tesseract || window.__noTesseract) throw new Error('El OCR no estÃ¡ disponible (sin conexiÃ³n). Escribe el cÃ³digo a mano o crea la carta como personalizada.');
   if (!workerPromise) {
-    workerPromise = Tesseract.createWorker('eng').catch(e => { workerPromise = null; throw e; });
+    window.FWApp.setStatus('Preparando el motor OCR (la primera vez descarga ~10 MB, puede tardar 1 min con datos mÃ³viles)â€¦', true);
+    workerPromise = Tesseract.createWorker('eng').catch(e => {
+      workerPromise = null;
+      throw new Error('Tu navegador no pudo iniciar el OCR. Escribe el cÃ³digo a mano en el recuadro de abajo.');
+    });
   }
   return workerPromise;
 }
 
-// DetecciÃ³n de cÃ³digos tipo FB01-001, ST02-100, EX03-015, P-001, MB01-012â€¦
+// ---- Ã­ndice del catÃ¡logo con claves "canÃ³nicas" (tolerantes a confusiones del OCR) ----
+const AMBIG = { O: '0', Q: '0', D: '0', U: '0', I: '1', L: '1', T: '7', S: '5', B: '8', Z: '2', G: '6', A: '4' };
+function canonStr(s) {
+  return String(s).toUpperCase().split('').map(ch => (Object.prototype.hasOwnProperty.call(AMBIG, ch) ? AMBIG[ch] : ch)).join('');
+}
+function buildIndex() {
+  const exact = new Set();
+  const canonMap = new Map();   // clave canÃ³nica -> cÃ³digo real del catÃ¡logo
+  (window.FW_DATA.cards || []).forEach(c => {
+    if (!c.c) return;
+    exact.add(c.c);
+    const k = canonStr(c.c);
+    if (!canonMap.has(k)) canonMap.set(k, c.c);
+  });
+  return { exact, canonMap };
+}
+
+// ---- extracciÃ³n de cÃ³digos desde el texto del OCR ----
 function extractCodes(text) {
+  const idx = window.FW_APP_INDEX || { exact: new Set(), canonMap: new Map() };
   const out = [];
-  const re = /\b([A-Z]{1,4}\d{0,2})\s*[-â€“â€”:]\s*(\d{1,4})\b/g;
+  const push = c => { if (c && !out.includes(c)) out.push(c); };
+  const lookups = pre => {
+    const variants = [pre];
+    if (/^[0-9]/.test(pre)) variants.push(pre.slice(1));          // perdiÃ³ una letra inicial: "8B01"â†’"B01"
+    if (!/^F/.test(pre)) variants.push('F' + pre);                 // perdiÃ³ la F inicial: "B01"â†’"FB01"
+    return variants;
+  };
+  const tryMatch = (pre, dig) => {
+    // 1) tal cual (con relleno de ceros)
+    [dig, dig.padStart(3, '0'), dig.padStart(2, '0')].forEach(d => push(pre + '-' + d));
+    // 2) corrigiendo caracteres confundidos, contra el catÃ¡logo
+    lookups(pre).forEach(p => {
+      [dig, dig.padStart(3, '0'), dig.padStart(2, '0')].forEach(d => {
+        const k = canonStr(p) + '-' + canonStr(d);
+        if (idx.canonMap.has(k)) push(idx.canonMap.get(k));
+      });
+    });
+  };
+
+  const T = String(text || '').toUpperCase();
   let m;
-  while ((m = re.exec(text.toUpperCase())) !== null) {
-    let prefix = m[1].replace(/[^A-Z0-9]/g, '');
-    let digits = m[2];
-    if (!/[A-Z]/.test(prefix) && prefix !== 'P') continue;   // requiere prefijo con letras (o P)
-    if (digits.length < 2) continue;
-    const cand1 = `${prefix}-${digits}`;
-    const cand2 = `${prefix}-${digits.padStart(3, '0')}`;
-    const cand3 = `${prefix}-${digits.padStart(2, '0')}`;
-    out.push(cand1, cand2, cand3);
+  const taken = [];   // rangos ya consumidos por cÃ³digos vÃ¡lidos (evita que "5000.FB05" se coma "FB05-013")
+  const overlap = (a, b) => taken.some(r => a < r[1] && b > r[0]);
+  // pasada estricta: separador real de carta (guion) y prefijo con letras+nÃºmeros
+  const reStrict = /\b([A-Z]{1,4}\d{1,2})\s*[-â€“â€”]\s*(\d{2,4})\b/g;
+  while ((m = reStrict.exec(T)) !== null) {
+    if (!overlap(m.index, m.index + m[0].length)) {
+      taken.push([m.index, m.index + m[0].length]);
+      tryMatch(m[1], m[2]);
+    }
   }
-  // el primero que exista en el catÃ¡logo gana; si no, el primero tal cual
-  const cat = window.FW_APP_INDEX;
-  const uniq = [...new Set(out)];
-  const hit = cat ? uniq.find(c => cat.has(c)) : null;
-  const result = [];
-  if (hit) result.push(hit);
-  uniq.forEach(c => { if (c !== hit) result.push(c); });
-  return result.slice(0, 8);
+  // pasada laxa: otros separadores que deja el OCR (puntos, dos puntos, barrasâ€¦)
+  const reSep = /\b([A-Z0-9]{1,4})\s*[-â€“â€”:|.Â·]\s*([A-Z0-9]{2,4})\b/g;
+  while ((m = reSep.exec(T)) !== null) {
+    if (!overlap(m.index, m.index + m[0].length)) tryMatch(m[1], m[2]);
+  }
+  // formato pegado sin separador: FB01001, 8B01001â€¦ (probando todas las particiones prefijo/dÃ­gitos)
+  const reTok = /\b[A-Z0-9]{4,7}\b/g;
+  while ((m = reTok.exec(T)) !== null) {
+    const tok = m[0];
+    if (!/[A-Z]/.test(tok)) continue;   // ignorar nÃºmeros puros (poder, stats)
+    if (overlap(m.index, m.index + tok.length)) continue;
+    for (let split = Math.max(1, tok.length - 4); split <= Math.min(4, tok.length - 2); split++) {
+      tryMatch(tok.slice(0, split), tok.slice(split));
+    }
+  }
+
+  // los cÃ³digos que existen en el catÃ¡logo van primero
+  const hits = out.filter(c => idx.exact.has(c));
+  const rest = out.filter(c => !idx.exact.has(c));
+  return hits.concat(rest).slice(0, 8);
+}
+
+// ---- preparaciÃ³n de imagen para el OCR (escala + escala de grises con contraste) ----
+function prepForOcr(srcCanvas) {
+  const MAX = 1500;
+  const scale = Math.min(1, MAX / Math.max(srcCanvas.width, srcCanvas.height));
+  const w = Math.max(32, Math.round(srcCanvas.width * scale));
+  const h = Math.max(32, Math.round(srcCanvas.height * scale));
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(srcCanvas, 0, 0, w, h);
+  try {
+    const im = ctx.getImageData(0, 0, w, h);
+    const d = im.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const g = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
+      const v = g < 90 ? (g * 0.65) | 0 : g > 170 ? 255 - (((255 - g) * 0.65) | 0) : g;
+      d[i] = d[i + 1] = d[i + 2] = v;
+      d[i + 3] = 255;
+    }
+    ctx.putImageData(im, 0, 0);
+  } catch (e) { /* si el lienzo no es legible, seguimos en color */ }
+  return cv;
 }
 
 function imageToCanvas(src, maxW) {
   return new Promise((res, rej) => {
     const im = new Image();
     im.onload = () => {
-      const scale = Math.min(1, (maxW || 1600) / im.naturalWidth);
+      const scale = Math.min(1, (maxW || 2400) / im.naturalWidth);
       const cv = document.createElement('canvas');
       cv.width = Math.round(im.naturalWidth * scale);
       cv.height = Math.round(im.naturalHeight * scale);
@@ -597,10 +726,11 @@ function imageToCanvas(src, maxW) {
 }
 
 async function ocrCanvas(cv, label) {
-  window.FWApp.setStatus(`Leyendo ${label || 'imagen'} con OCRâ€¦`, true);
+  window.FWApp.setStatus(`Leyendo ${label || 'imagen'} con OCR (en mÃ³vil puede tardar 10-30 s)â€¦`, true);
   try {
     const worker = await ensureWorker();
-    const { data } = await worker.recognize(cv);
+    window.FWApp.setStatus('Buscando cÃ³digos en la imagenâ€¦', true);
+    const { data } = await worker.recognize(prepForOcr(cv));
     const codes = extractCodes(data.text || '');
     window.FWApp.setStatus(null);
     return codes;
@@ -616,11 +746,9 @@ window.FWScan = {
       const fb = $('#camFallback p');
       if (fb) fb.textContent = 'ðŸ“¸ Este navegador/entorno no permite cÃ¡mara. Usa Â«Subir foto de la cartaÂ»: funciona igual.';
     }
-    // Ã­ndice de cÃ³digos para priorizar coincidencias exactas del OCR
-    const idx = new Set();
-    (window.FW_DATA.cards || []).forEach(c => idx.add(c.c));
-    window.FW_APP_INDEX = idx;
+    window.FW_APP_INDEX = buildIndex();
   },
+  extractCodes,   // expuesto para diagnÃ³stico/pruebas
   async startCamera() {
     if (!hasCameraAPI()) {
       $('#camFallback p').textContent = 'ðŸ“¸ CÃ¡mara no disponible aquÃ­ (usa Subir foto). Si abres la app vÃ­a http://localhost sÃ­ funcionarÃ¡.';
@@ -639,19 +767,27 @@ window.FWScan = {
   },
   async capture() {
     const v = $('#camPreview');
-    if (!stream || !v.videoWidth) { window.FWApp.setStatus('La cÃ¡mara no estÃ¡ activa'); return; }
-    const cv = document.createElement('canvas');
-    cv.width = v.videoWidth; cv.height = v.videoHeight;
-    cv.getContext('2d').drawImage(v, 0, 0);
-    const codes = await ocrCanvas(cv, 'captura');
-    window.FWApp.showScanResults(codes);
+    if (!stream || !v.videoWidth) { window.FWApp.setStatus('La cÃ¡mara no estÃ¡ activa todavÃ­a; espera a ver la imagen y vuelve a pulsar.'); return; }
+    const btn = $('#btnCamShot');
+    shutterSound();      // suena el obturador al hacer la foto
+    shutterFlash();
+    if (btn) { btn.disabled = true; btn.textContent = 'â³ Leyendoâ€¦'; }
+    try {
+      const cv = document.createElement('canvas');
+      cv.width = v.videoWidth; cv.height = v.videoHeight;
+      cv.getContext('2d').drawImage(v, 0, 0);
+      const codes = await ocrCanvas(cv, 'captura');
+      window.FWApp.showScanResults(codes, { hitsOnly: true });
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'ðŸ“¸ Escanear'; }
+    }
   },
   async ocrFile(file) {
     const url = URL.createObjectURL(file);
     try {
       const cv = await imageToCanvas(url);
       const codes = await ocrCanvas(cv, file.name);
-      window.FWApp.showScanResults(codes);
+      window.FWApp.showScanResults(codes, { hitsOnly: true });
     } finally { URL.revokeObjectURL(url); }
   },
   async ocrFiles(files) {
@@ -664,7 +800,7 @@ window.FWScan = {
         if (codes.length) all.push(codes[0]);
       } finally { URL.revokeObjectURL(url); }
     }
-    window.FWApp.showScanResults(all);
+    window.FWApp.showScanResults(all, { hitsOnly: true });
   },
 };
 })();
@@ -800,7 +936,15 @@ function enterGuest() {
   if (window.FW_PRICES) applySync(true);
   renderAll();
 }
-function showAuth() { $('#auth').hidden = false; $('#authUser').focus(); }
+function showAuth() {
+  $('#auth').hidden = false; $('#authUser').focus();
+  try {
+    const k = '__fw_test__';
+    localStorage.setItem(k, '1'); localStorage.removeItem(k);
+  } catch (e) {
+    authMsg('âš  Este navegador tiene el almacenamiento bloqueado (ventana de incÃ³gnito, navegador interno de otra app o seguridad estricta): las cuentas NO se guardarÃ¡n. Abre el enlace en tu navegador normal (Edge/Chrome).');
+  }
+}
 function authMsg(t) { const el = $('#authMsg'); el.textContent = t; el.hidden = !t; }
 function bindAuth() {
   let mode = 'in';
@@ -843,7 +987,10 @@ function bindAuth() {
       toast(`ðŸŽ‰ Cuenta creada. Â¡Bienvenido, ${state.user}!`);
     } else {
       const acc = accs[key];
-      if (!acc) { authMsg('Ese usuario no existe. CrÃ©alo con Â«Crear cuentaÂ».'); return; }
+      if (!acc) {
+        authMsg('Ese usuario no existe EN ESTE NAVEGADOR. Las cuentas no viajan entre dispositivos ni entre la app local y el enlace: si la creaste en el mÃ³vil, en otro navegador, en incÃ³gnito o en el index.html local, tienes que crearla aquÃ­ de nuevo (Ajustes â†’ Exportar/Importar para pasar tu cartera).');
+        return;
+      }
       const h = await hashPw(pw, acc.salt);
       if (h !== acc.hash) { authMsg('ContraseÃ±a incorrecta.'); return; }
       enterApp(key);
@@ -1487,9 +1634,21 @@ function init() {
   else showAuth();
 }
 window.FWApp = {
-  showScanResults: codes => {
+  showScanResults: (codes, opts) => {
     const box = $('#scanResults');
-    if (!codes.length) { box.innerHTML = '<p class="muted">No se detectÃ³ ningÃºn cÃ³digo. Prueba con una foto mÃ¡s nÃ­tida del texto inferior de la carta, o escrÃ­belo a mano.</p>'; return; }
+    const hitsOnly = !!(opts && opts.hitsOnly);
+    if (hitsOnly) codes = codes.filter(c => window.FW_APP_INDEX.exact.has(c));
+    if (!codes.length) {
+      box.innerHTML = `<p class="muted">â“ No se detectÃ³ ningÃºn cÃ³digo en esa foto. Consejos para que funcione:
+        <ul style="margin:6px 0 0 18px;text-align:left">
+          <li>Haz la foto <b>cerca</b>, centrando la <b>parte inferior de la carta</b> (ahÃ­ estÃ¡ el cÃ³digo, p. ej. FB01-001)</li>
+          <li>Con <b>buena luz</b> y sin reflejos, y con la carta recta (no girada ni tumbada)</li>
+          <li>Espera a que la imagen estÃ© bien enfocada antes de capturar</li>
+          <li>Â¿Muchas cartas? Usa Â«Subir foto de varias cartasÂ» con la parte inferior visible</li>
+        </ul>
+        Mientras tanto puedes <b>escribir el cÃ³digo a mano</b> aquÃ­ abajo â€” funciona igual.</p>`;
+      return;
+    }
     const counts = {};
     codes.forEach(c => counts[c] = (counts[c] || 0) + 1);
     const uniq = Object.keys(counts);

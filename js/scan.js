@@ -1,36 +1,86 @@
-/* EscÃ¡ner de cartas: cÃ¡mara o foto subida + OCR (Tesseract.js) para leer el cÃ³digo impreso (p. ej. FB01-001).
-   Optimizado para mÃ³vil: preprocesado de imagen, correcciÃ³n de caracteres que el OCR confunde
-   (Oâ†”0, Iâ†”1, Sâ†”5, Bâ†”8, Zâ†”2, Gâ†”6, Q/Dâ†”0, Lâ†”1) validada contra el catÃ¡logo real. */
+/* Escáner de cartas: cámara o foto subida + OCR (Tesseract.js) para leer el código impreso (p. ej. FB01-001).
+   Optimizado para móvil: preprocesado de imagen, corrección de caracteres que el OCR confunde
+   (O↔0, I↔1, S↔5, B↔8, Z↔2, G↔6, Q/D↔0, L↔1) validada contra el catálogo real. */
 (function () {
 'use strict';
 
 let stream = null;
 let workerPromise = null;
+let shutterCtx = null;
 
 const $ = s => document.querySelector(s);
 
 function hasCameraAPI() { return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia); }
 
+// Sonido de disparo de cámara sintetizado (sin archivos de audio): doble clic de obturador
+function shutterSound() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!shutterCtx) shutterCtx = new AC();
+    if (shutterCtx.state === 'suspended') shutterCtx.resume();
+    const t0 = shutterCtx.currentTime + 0.01;
+    const click = (t) => {
+      const dur = 0.07;
+      const buf = shutterCtx.createBuffer(1, Math.floor(shutterCtx.sampleRate * dur), shutterCtx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3);
+      const src = shutterCtx.createBufferSource();
+      src.buffer = buf;
+      const bp = shutterCtx.createBiquadFilter();
+      bp.type = 'bandpass'; bp.frequency.value = 3400; bp.Q.value = 0.7;
+      const g = shutterCtx.createGain();
+      g.gain.setValueAtTime(0.45, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      src.connect(bp); bp.connect(g); g.connect(shutterCtx.destination);
+      src.start(t);
+    };
+    click(t0);
+    click(t0 + 0.09);
+  } catch (e) { /* el sonido es opcional */ }
+}
+
+// Flash blanco breve sobre la vista de la cámara
+function shutterFlash() {
+  try {
+    const zone = $('.scan-zone');
+    if (!zone) return;
+    let fl = document.getElementById('scanFlash');
+    if (!fl) {
+      fl = document.createElement('div');
+      fl.id = 'scanFlash';
+      fl.style.cssText = 'position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .28s ease;z-index:3';
+      zone.appendChild(fl);
+    }
+    fl.style.transition = 'none';
+    fl.style.opacity = '0.85';
+    requestAnimationFrame(() => {
+      fl.style.transition = 'opacity .3s ease';
+      fl.style.opacity = '0';
+    });
+  } catch (e) { /* opcional */ }
+}
+
 async function ensureWorker() {
-  if (!window.Tesseract || window.__noTesseract) throw new Error('El OCR no estÃ¡ disponible (sin conexiÃ³n). Escribe el cÃ³digo a mano o crea la carta como personalizada.');
+  if (!window.Tesseract || window.__noTesseract) throw new Error('El OCR no está disponible (sin conexión). Escribe el código a mano o crea la carta como personalizada.');
   if (!workerPromise) {
-    window.FWApp.setStatus('Preparando el motor OCR (la primera vez descarga ~10 MB, puede tardar 1 min con datos mÃ³viles)â€¦', true);
+    window.FWApp.setStatus('Preparando el motor OCR (la primera vez descarga ~10 MB, puede tardar 1 min con datos móviles)…', true);
     workerPromise = Tesseract.createWorker('eng').catch(e => {
       workerPromise = null;
-      throw new Error('Tu navegador no pudo iniciar el OCR. Escribe el cÃ³digo a mano en el recuadro de abajo.');
+      throw new Error('Tu navegador no pudo iniciar el OCR. Escribe el código a mano en el recuadro de abajo.');
     });
   }
   return workerPromise;
 }
 
-// ---- Ã­ndice del catÃ¡logo con claves "canÃ³nicas" (tolerantes a confusiones del OCR) ----
+// ---- índice del catálogo con claves "canónicas" (tolerantes a confusiones del OCR) ----
 const AMBIG = { O: '0', Q: '0', D: '0', U: '0', I: '1', L: '1', T: '7', S: '5', B: '8', Z: '2', G: '6', A: '4' };
 function canonStr(s) {
   return String(s).toUpperCase().split('').map(ch => (Object.prototype.hasOwnProperty.call(AMBIG, ch) ? AMBIG[ch] : ch)).join('');
 }
 function buildIndex() {
   const exact = new Set();
-  const canonMap = new Map();   // clave canÃ³nica -> cÃ³digo real del catÃ¡logo
+  const canonMap = new Map();   // clave canónica -> código real del catálogo
   (window.FW_DATA.cards || []).forEach(c => {
     if (!c.c) return;
     exact.add(c.c);
@@ -40,21 +90,21 @@ function buildIndex() {
   return { exact, canonMap };
 }
 
-// ---- extracciÃ³n de cÃ³digos desde el texto del OCR ----
+// ---- extracción de códigos desde el texto del OCR ----
 function extractCodes(text) {
   const idx = window.FW_APP_INDEX || { exact: new Set(), canonMap: new Map() };
   const out = [];
   const push = c => { if (c && !out.includes(c)) out.push(c); };
   const lookups = pre => {
     const variants = [pre];
-    if (/^[0-9]/.test(pre)) variants.push(pre.slice(1));          // perdiÃ³ una letra inicial: "8B01"â†’"B01"
-    if (!/^F/.test(pre)) variants.push('F' + pre);                 // perdiÃ³ la F inicial: "B01"â†’"FB01"
+    if (/^[0-9]/.test(pre)) variants.push(pre.slice(1));          // perdió una letra inicial: "8B01"→"B01"
+    if (!/^F/.test(pre)) variants.push('F' + pre);                 // perdió la F inicial: "B01"→"FB01"
     return variants;
   };
   const tryMatch = (pre, dig) => {
     // 1) tal cual (con relleno de ceros)
     [dig, dig.padStart(3, '0'), dig.padStart(2, '0')].forEach(d => push(pre + '-' + d));
-    // 2) corrigiendo caracteres confundidos, contra el catÃ¡logo
+    // 2) corrigiendo caracteres confundidos, contra el catálogo
     lookups(pre).forEach(p => {
       [dig, dig.padStart(3, '0'), dig.padStart(2, '0')].forEach(d => {
         const k = canonStr(p) + '-' + canonStr(d);
@@ -65,39 +115,39 @@ function extractCodes(text) {
 
   const T = String(text || '').toUpperCase();
   let m;
-  const taken = [];   // rangos ya consumidos por cÃ³digos vÃ¡lidos (evita que "5000.FB05" se coma "FB05-013")
+  const taken = [];   // rangos ya consumidos por códigos válidos (evita que "5000.FB05" se coma "FB05-013")
   const overlap = (a, b) => taken.some(r => a < r[1] && b > r[0]);
-  // pasada estricta: separador real de carta (guion) y prefijo con letras+imos
-  const reStrict = /\b([A-Z]{1,4}\d{1,2})\s*[-â€“â€”]\s*(\d{2,4})\b/g;
+  // pasada estricta: separador real de carta (guion) y prefijo con letras+números
+  const reStrict = /\b([A-Z]{1,4}\d{1,2})\s*[-–—]\s*(\d{2,4})\b/g;
   while ((m = reStrict.exec(T)) !== null) {
     if (!overlap(m.index, m.index + m[0].length)) {
       taken.push([m.index, m.index + m[0].length]);
       tryMatch(m[1], m[2]);
     }
   }
-  // pasada laxa: otros separadores que deja el OCR (puntos, dos puntos, barrasâ€¦)
-  const reSep = /\b([A-Z0-9]{1,4})\s*[-â€“â€”:|.Â·]\s*([A-Z0-9]{2,4})\b/g;
+  // pasada laxa: otros separadores que deja el OCR (puntos, dos puntos, barras…)
+  const reSep = /\b([A-Z0-9]{1,4})\s*[-–—:|.·]\s*([A-Z0-9]{2,4})\b/g;
   while ((m = reSep.exec(T)) !== null) {
     if (!overlap(m.index, m.index + m[0].length)) tryMatch(m[1], m[2]);
   }
-  // formato pegado sin separador: FB01001, 8B01001â€¦ (probando todas las particiones prefijo/dÃ­gitos)
+  // formato pegado sin separador: FB01001, 8B01001… (probando todas las particiones prefijo/dígitos)
   const reTok = /\b[A-Z0-9]{4,7}\b/g;
   while ((m = reTok.exec(T)) !== null) {
     const tok = m[0];
-    if (!/[A-Z]/.test(tok)) continue;   // ignorar nÃºmeros puros (poder, stats)
+    if (!/[A-Z]/.test(tok)) continue;   // ignorar números puros (poder, stats)
     if (overlap(m.index, m.index + tok.length)) continue;
     for (let split = Math.max(1, tok.length - 4); split <= Math.min(4, tok.length - 2); split++) {
       tryMatch(tok.slice(0, split), tok.slice(split));
     }
   }
 
-  // los cÃ³digos que existen en el catÃ¡logo van primero
+  // los códigos que existen en el catálogo van primero
   const hits = out.filter(c => idx.exact.has(c));
   const rest = out.filter(c => !idx.exact.has(c));
   return hits.concat(rest).slice(0, 8);
 }
 
-// ---- preparaciÃ³n de imagen para el OCR (escala + escala de grises con contraste) ----
+// ---- preparación de imagen para el OCR (escala + escala de grises con contraste) ----
 function prepForOcr(srcCanvas) {
   const MAX = 1500;
   const scale = Math.min(1, MAX / Math.max(srcCanvas.width, srcCanvas.height));
@@ -138,10 +188,10 @@ function imageToCanvas(src, maxW) {
 }
 
 async function ocrCanvas(cv, label) {
-  window.FWApp.setStatus(`Leyendo ${label || 'imagen'} con OCR (en mÃ³vil puede tardar 10-30 s)â€¦`, true);
+  window.FWApp.setStatus(`Leyendo ${label || 'imagen'} con OCR (en móvil puede tardar 10-30 s)…`, true);
   try {
     const worker = await ensureWorker();
-    window.FWApp.setStatus('Buscando cÃ³digos en la imagenâ€¦', true);
+    window.FWApp.setStatus('Buscando códigos en la imagen…', true);
     const { data } = await worker.recognize(prepForOcr(cv));
     const codes = extractCodes(data.text || '');
     window.FWApp.setStatus(null);
@@ -156,14 +206,14 @@ window.FWScan = {
   initUI() {
     if (!hasCameraAPI()) {
       const fb = $('#camFallback p');
-      if (fb) fb.textContent = 'ðŸ“¸ Este navegador/entorno no permite cÃ¡mara. Usa Â«Subir foto de la cartaÂ»: funciona igual.';
+      if (fb) fb.textContent = '📸 Este navegador/entorno no permite cámara. Usa «Subir foto de la carta»: funciona igual.';
     }
     window.FW_APP_INDEX = buildIndex();
   },
-  extractCodes,   // expuesto para diagnÃ³stico/pruebas
+  extractCodes,   // expuesto para diagnóstico/pruebas
   async startCamera() {
     if (!hasCameraAPI()) {
-      $('#camFallback p').textContent = 'ðŸ“¸ CÃ¡mara no disponible aquÃ­ (usa Subir foto). Si abres la app vÃ­a http://localhost sÃ­ funcionarÃ¡.';
+      $('#camFallback p').textContent = '📸 Cámara no disponible aquí (usa Subir foto). Si abres la app vía http://localhost sí funcionará.';
       return;
     }
     try {
@@ -172,19 +222,27 @@ window.FWScan = {
       v.srcObject = stream; v.hidden = false;
       $('#camFallback').hidden = true;
       $('#btnCamShot').hidden = false;
-      $('#btnCamStart').textContent = 'ðŸŽ¥ CÃ¡mara activa';
+      $('#btnCamStart').textContent = '🎥 Cámara activa';
     } catch (e) {
-      $('#camFallback p').textContent = 'ðŸ“¸ Permiso de cÃ¡mara denegado o no disponible. Usa Â«Subir foto de la cartaÂ».';
+      $('#camFallback p').textContent = '📸 Permiso de cámara denegado o no disponible. Usa «Subir foto de la carta».';
     }
   },
   async capture() {
     const v = $('#camPreview');
-    if (!stream || !v.videoWidth) { window.FWApp.setStatus('La cÃ¡mara no estÃ¡ activa todavÃ­a; espera a ver la imagen y vuelve a pulsar.'); return; }
-    const cv = document.createElement('canvas');
-    cv.width = v.videoWidth; cv.height = v.videoHeight;
-    cv.getContext('2d').drawImage(v, 0, 0);
-    const codes = await ocrCanvas(cv, 'captura');
-    window.FWApp.showScanResults(codes, { hitsOnly: true });
+    if (!stream || !v.videoWidth) { window.FWApp.setStatus('La cámara no está activa todavía; espera a ver la imagen y vuelve a pulsar.'); return; }
+    const btn = $('#btnCamShot');
+    shutterSound();      // suena el obturador al hacer la foto
+    shutterFlash();
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Leyendo…'; }
+    try {
+      const cv = document.createElement('canvas');
+      cv.width = v.videoWidth; cv.height = v.videoHeight;
+      cv.getContext('2d').drawImage(v, 0, 0);
+      const codes = await ocrCanvas(cv, 'captura');
+      window.FWApp.showScanResults(codes, { hitsOnly: true });
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '📸 Escanear'; }
+    }
   },
   async ocrFile(file) {
     const url = URL.createObjectURL(file);
