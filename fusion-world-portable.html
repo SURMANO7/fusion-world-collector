@@ -304,7 +304,7 @@ main { max-width: 1280px; margin: 0 auto; padding: 22px; }
 #authForm .btn { margin-top: 6px; }
 
 .badge-psa {
-  position: absolute; bottom: 8px; left: 8px; z-index: 2;
+  position: absolute; top: 8px; right: 8px; z-index: 2;
   background: var(--gold); color: #221a02; font-weight: 800; font-size: 11px;
   border-radius: 999px; padding: 3px 8px; box-shadow: 0 2px 8px rgba(0,0,0,.5);
 }
@@ -1335,7 +1335,6 @@ let chartRef = null;
 let psaSel = 10;
 function psaSectionHTML(k, card) {
   const base = rawPriceOf(k, card);
-  const ownedPsa = state.col.find(x => x.k === k && x.psa);
   const chips = PSA_GRADES.map(g => {
     const est = psaEstimate(card, g, base);
     return `<button type="button" class="psa-chip ${g === psaSel ? 'sel' : ''}" data-psa="${g}"><b>PSA ${g}</b><span>${est != null ? fmtP(est) : 'â€”'}</span></button>`;
@@ -1347,7 +1346,6 @@ function psaSectionHTML(k, card) {
     <div class="psa-sel">Con nota <b>PSA ${psaSel}</b> esta carta valdrÃ­a <b style="color:var(--gold)">${selEst != null ? fmtP(selEst) : 'â€”'}</b>${mult ? ` <span class="muted">(${mult})</span>` : ''}</div>
     <div class="detail-actions">
       <button class="btn primary" id="btnSavePsa">ðŸŽ’ Guardar en mi cartera como PSA ${psaSel}</button>
-      ${ownedPsa ? `<span class="psa-owned">En cartera: PSA ${ownedPsa.psa} Ã—${ownedPsa.q}</span>` : ''}
     </div>
     <p class="muted" style="font-size:12px;margin-top:8px">EstimaciÃ³n orientativa con los multiplicadores actuales del mercado TCG (no es una valoraciÃ³n oficial).</p>`;
 }
@@ -1358,7 +1356,8 @@ function openModal(k) {
   if (r.type === '?' || (!r.card && !r.custom)) { toast('Esa carta ya no existe en el catÃ¡logo'); return; }
   const card = r.card, custom = r.custom;
   const e = state.col.find(x => x.k === k && !x.psa) || state.col.find(x => x.k === k);
-  if (isNew) psaSel = (state.col.find(x => x.k === k && x.psa) || {}).psa || 10;
+  const ownedPsa = state.col.find(x => x.k === k && x.psa);
+  if (isNew) psaSel = ownedPsa ? ownedPsa.psa : 10;
   const l = latest(k), pv = prev(k);
   const nm = card ? card.n : custom.n;
   const rc = (card && card.se) ? 'rc-Leader' : rarityClass((card || custom).r);
@@ -1382,6 +1381,7 @@ function openModal(k) {
   } else {
     meta.push(custom.set || 'sin set', custom.r, custom.o);
   }
+  if (ownedPsa) meta.push('ðŸ† PSA ' + ownedPsa.psa + ' Ã—' + ownedPsa.q + ' en cartera');
   const ch = pv && l ? ((l.p - pv.p) / pv.p) * 100 : null;
   $('#modalBody').innerHTML = `
     <div class="detail-top ${rc}">

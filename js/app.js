@@ -502,7 +502,6 @@ let chartRef = null;
 let psaSel = 10;
 function psaSectionHTML(k, card) {
   const base = rawPriceOf(k, card);
-  const ownedPsa = state.col.find(x => x.k === k && x.psa);
   const chips = PSA_GRADES.map(g => {
     const est = psaEstimate(card, g, base);
     return `<button type="button" class="psa-chip ${g === psaSel ? 'sel' : ''}" data-psa="${g}"><b>PSA ${g}</b><span>${est != null ? fmtP(est) : '—'}</span></button>`;
@@ -514,7 +513,6 @@ function psaSectionHTML(k, card) {
     <div class="psa-sel">Con nota <b>PSA ${psaSel}</b> esta carta valdría <b style="color:var(--gold)">${selEst != null ? fmtP(selEst) : '—'}</b>${mult ? ` <span class="muted">(${mult})</span>` : ''}</div>
     <div class="detail-actions">
       <button class="btn primary" id="btnSavePsa">🎒 Guardar en mi cartera como PSA ${psaSel}</button>
-      ${ownedPsa ? `<span class="psa-owned">En cartera: PSA ${ownedPsa.psa} ×${ownedPsa.q}</span>` : ''}
     </div>
     <p class="muted" style="font-size:12px;margin-top:8px">Estimación orientativa con los multiplicadores actuales del mercado TCG (no es una valoración oficial).</p>`;
 }
@@ -525,7 +523,8 @@ function openModal(k) {
   if (r.type === '?' || (!r.card && !r.custom)) { toast('Esa carta ya no existe en el catálogo'); return; }
   const card = r.card, custom = r.custom;
   const e = state.col.find(x => x.k === k && !x.psa) || state.col.find(x => x.k === k);
-  if (isNew) psaSel = (state.col.find(x => x.k === k && x.psa) || {}).psa || 10;
+  const ownedPsa = state.col.find(x => x.k === k && x.psa);
+  if (isNew) psaSel = ownedPsa ? ownedPsa.psa : 10;
   const l = latest(k), pv = prev(k);
   const nm = card ? card.n : custom.n;
   const rc = (card && card.se) ? 'rc-Leader' : rarityClass((card || custom).r);
@@ -549,6 +548,7 @@ function openModal(k) {
   } else {
     meta.push(custom.set || 'sin set', custom.r, custom.o);
   }
+  if (ownedPsa) meta.push('🏆 PSA ' + ownedPsa.psa + ' ×' + ownedPsa.q + ' en cartera');
   const ch = pv && l ? ((l.p - pv.p) / pv.p) * 100 : null;
   $('#modalBody').innerHTML = `
     <div class="detail-top ${rc}">
