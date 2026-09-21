@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dragon Ball Fusion World — Coleccionista</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐉</text></svg>">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-star">✦</span>
+    <div>
+      <h1>Fusion World <em>Coleccionista</em></h1>
+      <p class="brand-sub">Dragon Ball Super Card Game · <span id="dbInfo"></span></p>
+    </div>
+  </div>
+  <nav class="tabs">
+    <button class="tab active" data-view="collection">🎒 Mi Cartera</button>
+    <button class="tab" data-view="add">➕ Añadir cartas</button>
+    <button class="tab" data-view="catalog">🗂 Catálogo completo</button>
+    <button class="tab" data-view="settings">⚙️ Ajustes</button>
+  </nav>
+  <div class="userbox">
+    <span id="userChip">👤 Invitado</span>
+    <button id="btnLogout" class="btn small" title="Cerrar sesión y cambiar de usuario">Cambiar</button>
+  </div>
+</header>
+
+<main id="main">
+  <!-- ============ MI CARTERA ============ -->
+  <section id="view-collection" class="view">
+    <div class="stats-bar" id="statsBar"></div>
+    <div class="toolbar">
+      <input type="search" id="colSearch" placeholder="Buscar en mi cartera (nombre o nº)…">
+      <select id="colSetFilter"><option value="">Todos los sets</option></select>
+      <select id="colRarityFilter"><option value="">Todas las rarezas</option></select>
+      <select id="colSort">
+        <option value="added">Orden: añadido recientemente</option>
+        <option value="name">Orden: nombre A→Z</option>
+        <option value="priceDesc">Orden: precio ↓</option>
+        <option value="valueDesc">Orden: valor total ↓</option>
+        <option value="number">Orden: número de carta</option>
+      </select>
+    </div>
+    <div id="collectionGrid" class="card-grid"></div>
+    <div id="collectionEmpty" class="empty-state" hidden>
+      <p class="empty-emoji">🧭</p>
+      <h3>Tu cartera está vacía</h3>
+      <p>Añade cartas con el <b>escáner</b>, buscando en el <b>catálogo</b> o creando una <b>carta personalizada</b>.</p>
+      <button class="btn primary" data-goto="add">➕ Añadir mi primera carta</button>
+    </div>
+  </section>
+
+  <!-- ============ AÑADIR ============ -->
+  <section id="view-add" class="view" hidden>
+    <div class="subtabs">
+      <button class="subtab active" data-subtab="scan">📷 Escáner</button>
+      <button class="subtab" data-subtab="search">🔍 Buscar carta</button>
+      <button class="subtab" data-subtab="custom">✍️ Carta personalizada</button>
+    </div>
+
+    <!-- Escáner -->
+    <div id="subtab-scan" class="subview">
+      <div class="panel">
+        <h3>📷 Escanear carta</h3>
+        <p class="muted">Haz una foto a la carta (se leerá el <b>código</b> impreso, p. ej. <code>FB01-001</code>) o súbela como imagen.
+        La cámara requiere servir la app por <code>http://</code> o <code>https://</code>; si abres el archivo directamente usa la opción de subir foto.</p>
+        <div class="scan-zone">
+          <video id="camPreview" autoplay playsinline muted hidden></video>
+          <canvas id="camCanvas" hidden></canvas>
+          <div id="camFallback" class="cam-fallback">
+            <p>📸 Cámara no disponible en este modo de apertura.</p>
+          </div>
+        </div>
+        <div class="scan-actions">
+          <button id="btnCamStart" class="btn">🎥 Activar cámara</button>
+          <button id="btnCamShot" class="btn primary" hidden>📸 Capturar y leer</button>
+          <label class="btn file-btn">🖼 Subir foto de la carta<input type="file" id="fileScan" accept="image/*" hidden></label>
+          <label class="btn file-btn">🖼 Subir foto de varias cartas<input type="file" id="fileScanMulti" accept="image/*" multiple hidden></label>
+        </div>
+        <div class="scan-actions">
+          <input type="text" id="manualCode" placeholder="…o escribe el código (p. ej. FB01-001)">
+          <button id="btnManualCode" class="btn primary">Buscar código</button>
+        </div>
+        <div id="ocrStatus" class="muted" hidden></div>
+        <div id="scanResults"></div>
+      </div>
+    </div>
+
+    <!-- Buscar -->
+    <div id="subtab-search" class="subview" hidden>
+      <div class="panel">
+        <h3>🔍 Buscar en el catálogo</h3>
+        <div class="toolbar">
+          <input type="search" id="catSearch" placeholder="Nombre de la carta o código (FB01-001)…">
+          <select id="catSetFilter"><option value="">Todos los sets</option></select>
+          <select id="catRarityFilter"><option value="">Todas las rarezas</option></select>
+        </div>
+        <div id="catalogResults" class="card-grid add-grid"></div>
+        <button id="btnLoadMore" class="btn wide" hidden>Cargar más resultados</button>
+        <p id="catalogEmptyMsg" class="muted center" hidden>No hay cartas que coincidan. Si la carta no existe en Cardmarket/TCGplayer, créala en <b>Carta personalizada</b>.</p>
+      </div>
+    </div>
+
+    <!-- Personalizada -->
+    <div id="subtab-custom" class="subview" hidden>
+      <div class="panel">
+        <h3>✍️ Añadir carta no registrada (fuera de Cardmarket)</h3>
+        <p class="muted">Para promos locales, cartas hechas por fans, versiones de otros juegos o cualquier carta que no aparezca en el catálogo.</p>
+        <form id="customForm" class="form-grid">
+          <label>Nombre *<input name="n" required placeholder="Kamehameha dorado (promo torneo local)"></label>
+          <label>Set / procedencia<input name="set" placeholder="Torneo Local 2026"></label>
+          <label>Código / número<input name="c" placeholder="LOC-001"></label>
+          <label>Rareza
+            <select name="r">
+              <option>Común</option><option>Infrecuente</option><option>Rara</option>
+              <option>Super Rara</option><option>Secreta</option><option>Promo</option><option>Desconocida</option>
+            </select>
+          </label>
+          <label>Color / tipo<input name="o" placeholder="Rojo, Batalla…"></label>
+          <label>Cantidad<input name="q" type="number" min="1" value="1"></label>
+          <label>Precio medio actual (opcional)<input name="p0" type="number" step="0.01" min="0" placeholder="€ o $ — tú decides"></label>
+          <label class="span2">Notas<textarea name="notes" rows="2" placeholder="Estado, origen, intercambio…"></textarea></label>
+          <div class="span2 form-actions">
+            <button type="submit" class="btn primary">💾 Guardar y añadir a mi cartera</button>
+          </div>
+        </form>
+        <h4>Mis cartas personalizadas</h4>
+        <div id="customList" class="custom-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CATÁLOGO ============ -->
+  <section id="view-catalog" class="view" hidden>
+    <div class="panel">
+      <h3>🗂 Catálogo completo · <span id="catalogCount" class="muted"></span></h3>
+      <p class="muted">Todas las cartas de Dragon Ball Fusion World registradas en TCGplayer/TCGCSV (equivalente al catálogo de Cardmarket), con precios reales de mercado. Haz clic en una carta para ver su ficha y gráfica.</p>
+      <div class="toolbar">
+        <input type="search" id="allSearch" placeholder="Nombre o código…">
+        <select id="allSetFilter"><option value="">Todos los sets</option></select>
+        <select id="allRarityFilter"><option value="">Todas las rarezas</option></select>
+        <select id="allTypeFilter"><option value="">Todos los tipos</option></select>
+      </div>
+      <div id="allGrid" class="card-grid"></div>
+      <button id="btnAllLoadMore" class="btn wide">Cargar más</button>
+    </div>
+  </section>
+
+  <!-- ============ AJUSTES ============ -->
+  <section id="view-settings" class="view" hidden>
+    <div class="panel">
+      <h3>⚙️ Ajustes y datos</h3>
+      <h4>💾 Copia de seguridad</h4>
+      <div class="btn-row">
+        <button id="btnExport" class="btn">⬇️ Exportar cartera (JSON)</button>
+        <label class="btn file-btn">⬆️ Importar copia<input type="file" id="fileImport" accept="application/json" hidden></label>
+      </div>
+      <h4>🔄 Precios</h4>
+      <div class="btn-row">
+        <button id="btnSyncNow" class="btn">🔄 Buscar precios actualizados ahora</button>
+      </div>
+      <p class="muted">Los precios iniciales son reales (TCGplayer vía TCGCSV, descargados el <span id="dataGenDate"></span>).
+      La tarea programada de Windows <b>«FusionWorld Precios Diarios»</b> ejecuta <code>update_prices.ps1</code> cada día a las 9:30 y hace dos cosas: <b>actualiza los precios</b> de todo el catálogo y <b>añade los productos nuevos</b> (cartas, cajas y sobres que Cardmarket/TCGplayer incorpore en el futuro, incluidas líneas y sets nuevos). Al abrir (o recargar con F5) la app, cada precio nuevo se añade como un punto real del historial y las gráficas crecen solas. También puedes ejecutar el script a mano (clic derecho → Ejecutar con PowerShell) o registrar precios a mano en cada ficha.</p>
+      <p class="muted">El <b>precio medio</b> mostrado es el precio medio de mercado del último registro disponible (equivalente al «precio medio del último día de venta» de Cardmarket; el valor exacto en € está en el enlace a Cardmarket de cada carta).</p>
+      <h4>👤 Sesión</h4>
+      <p class="muted">Estás usando la app como <b id="whoami">invitado</b>. Tu colección se guarda por cuenta en este navegador. Pulsa «Cambiar» (arriba a la derecha) para cerrar sesión o crear otra cuenta; al registrarte podrás importar la colección que tengas sin cuenta.</p>
+      <h4>🗑 Zona peligrosa</h4>
+      <button id="btnWipe" class="btn danger">Borrar TODA la cartera, historial y personalizadas de la sesión actual</button>
+      <h4>ℹ️ Acerca de</h4>
+      <p class="muted">Catálogo: Dragon Ball Super Card Game Fusion World — <span id="setCountInfo"></span> líneas/sets y <span id="cardCountInfo"></span> productos con precio (cartas sueltas + cajas y sobres sellados). Fuentes: TCGplayer/TCGCSV. Enlaces de compra/precio en €: Cardmarket. Esta app funciona 100% en tu navegador; los datos se guardan en tu dispositivo.</p>
+    </div>
+  </section>
+</main>
+
+<!-- ============ ACCESO / CUENTAS ============ -->
+<div id="auth" class="auth-overlay" hidden>
+  <div class="auth-card">
+    <div class="auth-star">✦</div>
+    <h1>Fusion World <em>Coleccionista</em></h1>
+    <p class="muted center">Cada cuenta guarda su propia colección, historial de precios y cartas personalizadas en este navegador.</p>
+    <div class="subtabs" style="justify-content:center">
+      <button class="subtab active" id="authTabIn" type="button">🔑 Entrar</button>
+      <button class="subtab" id="authTabUp" type="button">➕ Crear cuenta</button>
+    </div>
+    <form id="authForm">
+      <label class="auth-label">Usuario
+        <input id="authUser" autocomplete="username" placeholder="tu_nombre" maxlength="20" required>
+      </label>
+      <label class="auth-label">Contraseña
+        <input id="authPass" type="password" autocomplete="current-password" placeholder="mínimo 4 caracteres" required>
+      </label>
+      <div id="authMsg" class="auth-msg" hidden></div>
+      <button class="btn primary wide" id="authSubmit" type="submit">Entrar</button>
+    </form>
+    <p class="muted center" style="margin-top:16px">
+      <a href="#" id="authGuest">Continuar como invitado</a> — se guarda igualmente, pero sin contraseña y compartido en este navegador.
+    </p>
+    <p class="muted center" style="margin-top:6px;font-size:12px">Las cuentas son locales a este navegador/dispositivo. Usa «Exportar cartera» en Ajustes para pasarla a otro PC.</p>
+  </div>
+</div>
+
+<!-- ============ MODAL DETALLE ============ -->
+<div id="modal" class="modal" hidden>
+  <div class="modal-card">
+    <button class="modal-close" id="modalClose">✕</button>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="js/data.js"></script>
+<script src="js/prices_latest.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js" onerror="window.__noTesseract=true"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" onerror="window.__noChart=true"></script>
+<script src="js/scan.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

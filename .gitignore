@@ -1,0 +1,5 @@
+# Archivos locales de desarrollo (no se publican)
+data/
+tools/
+headers.txt
+*.log
