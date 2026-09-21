@@ -825,8 +825,10 @@ function init() {
   else showAuth();
 }
 window.FWApp = {
-  showScanResults: codes => {
+  showScanResults: (codes, opts) => {
     const box = $('#scanResults');
+    const hitsOnly = !!(opts && opts.hitsOnly);
+    if (hitsOnly) codes = codes.filter(c => window.FW_APP_INDEX.exact.has(c));
     if (!codes.length) {
       box.innerHTML = `<p class="muted">❓ No se detectó ningún código en esa foto. Consejos para que funcione:
         <ul style="margin:6px 0 0 18px;text-align:left">
