@@ -127,7 +127,15 @@ function enterGuest() {
   if (window.FW_PRICES) applySync(true);
   renderAll();
 }
-function showAuth() { $('#auth').hidden = false; $('#authUser').focus(); }
+function showAuth() {
+  $('#auth').hidden = false; $('#authUser').focus();
+  try {
+    const k = '__fw_test__';
+    localStorage.setItem(k, '1'); localStorage.removeItem(k);
+  } catch (e) {
+    authMsg('⚠ Este navegador tiene el almacenamiento bloqueado (ventana de incógnito, navegador interno de otra app o seguridad estricta): las cuentas NO se guardarán. Abre el enlace en tu navegador normal (Edge/Chrome).');
+  }
+}
 function authMsg(t) { const el = $('#authMsg'); el.textContent = t; el.hidden = !t; }
 function bindAuth() {
   let mode = 'in';
@@ -170,7 +178,10 @@ function bindAuth() {
       toast(`🎉 Cuenta creada. ¡Bienvenido, ${state.user}!`);
     } else {
       const acc = accs[key];
-      if (!acc) { authMsg('Ese usuario no existe. Créalo con «Crear cuenta».'); return; }
+      if (!acc) {
+        authMsg('Ese usuario no existe EN ESTE NAVEGADOR. Las cuentas no viajan entre dispositivos ni entre la app local y el enlace: si la creaste en el móvil, en otro navegador, en incógnito o en el index.html local, tienes que crearla aquí de nuevo (Ajustes → Exportar/Importar para pasar tu cartera).');
+        return;
+      }
       const h = await hashPw(pw, acc.salt);
       if (h !== acc.hash) { authMsg('Contraseña incorrecta.'); return; }
       enterApp(key);
