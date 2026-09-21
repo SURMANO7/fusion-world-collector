@@ -827,7 +827,17 @@ function init() {
 window.FWApp = {
   showScanResults: codes => {
     const box = $('#scanResults');
-    if (!codes.length) { box.innerHTML = '<p class="muted">No se detectó ningún código. Prueba con una foto más nítida del texto inferior de la carta, o escríbelo a mano.</p>'; return; }
+    if (!codes.length) {
+      box.innerHTML = `<p class="muted">❓ No se detectó ningún código en esa foto. Consejos para que funcione:
+        <ul style="margin:6px 0 0 18px;text-align:left">
+          <li>Haz la foto <b>cerca</b>, centrando la <b>parte inferior de la carta</b> (ahí está el código, p. ej. FB01-001)</li>
+          <li>Con <b>buena luz</b> y sin reflejos, y con la carta recta (no girada ni tumbada)</li>
+          <li>Espera a que la imagen esté bien enfocada antes de capturar</li>
+          <li>¿Muchas cartas? Usa «Subir foto de varias cartas» con la parte inferior visible</li>
+        </ul>
+        Mientras tanto puedes <b>escribir el código a mano</b> aquí abajo — funciona igual.</p>`;
+      return;
+    }
     const counts = {};
     codes.forEach(c => counts[c] = (counts[c] || 0) + 1);
     const uniq = Object.keys(counts);
