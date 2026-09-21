@@ -10,6 +10,7 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp
 const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 const fmtP = n => '$' + (Math.round(n * 100) / 100).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const today = () => new Date().toISOString().slice(0, 10);
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const img = i => `https://tcgplayer-cdn.tcgplayer.com/product/${i}_200w.jpg`;
 const cardmarketUrl = q => `https://www.cardmarket.com/en/DragonBallSuper/Products/Search?searchString=${encodeURIComponent(q)}`;
 const ebayUrl = q => `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q)}`;
@@ -74,6 +75,9 @@ function loadState() {
   state.col = load(K('col'), []);
   state.hist = load(K('hist'), {});
   state.custom = load(K('custom'), []);
+  let migr = false;
+  state.col.forEach(e => { if (!e.id) { e.id = uid(); migr = true; } });
+  if (migr) save(K('col'), state.col);
 }
 function saveState(mask) {
   if (mask & 1) save(K('col'), state.col);
@@ -199,6 +203,28 @@ function marketOf(prices, finish) {
   const f = prices.N || prices.H;
   return f ? f[2] : null;
 }
+
+// ---- valoración PSA (estimación con los multiplicadores actuales del mercado TCG) ----
+const PSA_GRADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 9.5, 10];
+const PSA_RATIO = { 1: 0.08, 2: 0.10, 3: 0.11, 4: 0.13, 5: 0.16, 6: 0.19, 7: 0.23, 8: 0.30, 9: 0.42, 9.5: 0.62, 10: 1 };
+function psaBaseMultiplier(raw) {
+  if (raw < 3) return 5.0;        // cartas baratas: el PSA 10 se multiplica mucho
+  if (raw < 10) return 3.8;
+  if (raw < 30) return 3.0;
+  if (raw < 100) return 2.4;
+  if (raw < 300) return 2.0;
+  return 1.7;                      // cartas caras: prima más contenida
+}
+function psaEstimate(card, grade, basePrice) {
+  if (!card || basePrice == null || !isFinite(basePrice) || basePrice <= 0) return null;
+  const p10 = basePrice * psaBaseMultiplier(basePrice);
+  return Math.max(0.5, Math.round(p10 * (PSA_RATIO[grade] || 1) * 100) / 100);
+}
+function rawPriceOf(k, card) {
+  const l = latest(k);
+  if (l) return l.p;
+  return marketOf(card && card.pr, null);
+}
 function cardByKey(k) {
   if (k[0] === 't') return { type: 'card', card: byId.get(+k.slice(1)) };
   if (k[0] === 'c') return { type: 'custom', custom: state.custom.find(c => 'c' + c.id === k) };
@@ -298,8 +324,9 @@ function thumbHTML(pres, card, custom) {
   const im = card ? `<img loading="lazy" src="${img(card.i)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">` : '';
   const ph = `<div class="ph" style="display:${card ? 'none' : 'flex'}">${custom ? '<span style="font-size:30px">✍️</span>' : ''}<b>${esc(custom ? custom.n : card.c)}</b><span>${esc(custom ? custom.set : setName(card.g))}</span></div>`;
   const qty = pres && pres.q > 1 ? `<span class="badge-qty">×${pres.q}</span>` : '';
+  const psa = pres && pres.psa ? `<span class="badge-psa">🏆 PSA ${pres.psa}</span>` : '';
   const cust = custom ? '<span class="badge-custom">personalizada</span>' : '';
-  return `<div class="thumb">${im}${ph}${qty}${cust}</div>`;
+  return `<div class="thumb">${im}${ph}${qty}${psa}${cust}</div>`;
 }
 function sparkSVG(k) {
   const pts = realPoints(k).slice(-30);
@@ -337,8 +364,8 @@ function colFiltered() {
   });
   if (fs) rows = rows.filter(r => r.card && String(r.card.g) === fs);
   if (fr) rows = rows.filter(r => norm((r.card || r.custom).r || '') === fr);
-  const val = r => { const l = latest(r.e.k); return l ? l.p * r.e.q : 0; };
-  const price = r => { const l = latest(r.e.k); return l ? l.p : -1; };
+  const val = r => (entryPrice(r.e, r.card) || 0) * r.e.q;
+  const price = r => entryPrice(r.e, r.card) || -1;
   rows.sort((a, b) => {
     if (sort === 'name') return norm((a.card || a.custom).n).localeCompare(norm((b.card || b.custom).n));
     if (sort === 'priceDesc') return price(b) - price(a);
@@ -353,8 +380,8 @@ function renderStats() {
   let units = 0, value = 0, withP = 0;
   rows.forEach(x => {
     units += x.e.q;
-    const l = latest(x.e.k);
-    if (l) { value += l.p * x.e.q; withP++; }
+    const p = x.e.psa ? psaEstimate(x.r.card, x.e.psa, rawPriceOf(x.e.k, x.r.card)) : (latest(x.e.k) || {}).p;
+    if (p) { value += p * x.e.q; withP++; }
   });
   let lastDate = (window.FW_PRICES && window.FW_PRICES.date) || DATA.generated;
   state.col.forEach(e => { const l = latest(e.k); if (l && l.d > lastDate) lastDate = l.d; });
@@ -378,16 +405,19 @@ function renderCollection() {
     const nm = r.card ? r.card.n : r.custom.n;
     const num = r.card ? productNum(r.card) : (r.custom.c || '—');
     const rc = (r.card && r.card.se) ? 'rc-Leader' : rarityClass((r.card || r.custom).r);
+    const spark = r.e.psa
+      ? `<svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none"><line x1="0" y1="15" x2="100" y2="15" stroke="#ffd166" stroke-width="2" stroke-dasharray="4 3"/></svg>`
+      : sparkSVG(r.e.k);
     return `<div class="fw-card ${rc}" data-k="${esc(r.e.k)}">
       ${thumbHTML(r.e, r.card, r.custom)}
       <div class="info">
         <div class="nm">${esc(nm)}</div>
         <div class="row"><span class="num">${esc(num)}</span><span class="rar-tag">${esc(r.card ? productTag(r.card) : rarityLabel(r.custom.r))}</span></div>
-        <div class="row">${priceHTML(r.e.k)}<span class="muted" style="font-size:11.5px">${r.card ? esc(setName(r.card.g)) : 'personalizada'}</span></div>
-        ${sparkSVG(r.e.k)}
+        <div class="row">${priceEntryHTML(r.e, r.card)}<span class="muted" style="font-size:11.5px">${r.card ? esc(setName(r.card.g)) : 'personalizada'}</span></div>
+        ${spark}
         <div class="qty-controls">
-          <button data-act="dec" title="Quitar una">−</button><span class="q">×${r.e.q}</span><button data-act="inc" title="Añadir una">+</button>
-          <span style="flex:1"></span><button data-act="del" title="Quitar de la cartera">🗑</button>
+          <button data-act="dec" data-eid="${esc(r.e.id)}" title="Quitar una">−</button><span class="q">×${r.e.q}</span><button data-act="inc" data-eid="${esc(r.e.id)}" title="Añadir una">+</button>
+          <span style="flex:1"></span><button data-act="del" data-eid="${esc(r.e.id)}" title="Quitar de la cartera">🗑</button>
         </div>
       </div>
     </div>`;
@@ -418,7 +448,7 @@ function catalogFilter(cfg) {
   return list;
 }
 function catalogCardHTML(c) {
-  const pres = state.col.find(e => e.k === 't' + c.i);
+  const pres = state.col.find(e => e.k === 't' + c.i && !e.psa) || state.col.find(e => e.k === 't' + c.i);
   const rc = c.se ? 'rc-Leader' : rarityClass(c.r);
   return `<div class="fw-card ${rc}" data-open="t${c.i}">
     ${thumbHTML(pres, c, null)}
@@ -467,12 +497,32 @@ function renderCustomList() {
 // ---------------------------------------------------------------- modal de detalle
 let modalKey = null;
 let chartRef = null;
+let psaSel = 10;
+function psaSectionHTML(k, card) {
+  const base = rawPriceOf(k, card);
+  const ownedPsa = state.col.find(x => x.k === k && x.psa);
+  const chips = PSA_GRADES.map(g => {
+    const est = psaEstimate(card, g, base);
+    return `<button type="button" class="psa-chip ${g === psaSel ? 'sel' : ''}" data-psa="${g}"><b>PSA ${g}</b><span>${est != null ? fmtP(est) : '—'}</span></button>`;
+  }).join('');
+  const selEst = psaEstimate(card, psaSel, base);
+  const mult = base ? `≈ ${(psaBaseMultiplier(base) * (PSA_RATIO[psaSel] || 1)).toFixed(2)}× el precio sin gradear` : '';
+  return `<h4 style="margin-top:14px">🏆 Versión gradeada PSA — precio estimado por valoración</h4>
+    <div class="psa-grid">${chips}</div>
+    <div class="psa-sel">Con nota <b>PSA ${psaSel}</b> esta carta valdría <b style="color:var(--gold)">${selEst != null ? fmtP(selEst) : '—'}</b>${mult ? ` <span class="muted">(${mult})</span>` : ''}</div>
+    <div class="detail-actions">
+      <button class="btn primary" id="btnSavePsa">🎒 Guardar en mi cartera como PSA ${psaSel}</button>
+      ${ownedPsa ? `<span class="psa-owned">En cartera: PSA ${ownedPsa.psa} ×${ownedPsa.q}</span>` : ''}
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:8px">Estimación orientativa con los multiplicadores actuales del mercado TCG (no es una valoración oficial). PSA no emite la nota 9.5 — es propia de BGS/SGC; se incluye como referencia.</p>`;
+}
 function openModal(k) {
   modalKey = k;
   const r = cardByKey(k);
   if (r.type === '?' || (!r.card && !r.custom)) { toast('Esa carta ya no existe en el catálogo'); return; }
   const card = r.card, custom = r.custom;
-  const e = state.col.find(x => x.k === k);
+  const e = state.col.find(x => x.k === k && !x.psa) || state.col.find(x => x.k === k);
+  psaSel = (state.col.find(x => x.k === k && x.psa) || {}).psa || 10;
   const l = latest(k), pv = prev(k);
   const nm = card ? card.n : custom.n;
   const rc = (card && card.se) ? 'rc-Leader' : rarityClass((card || custom).r);
@@ -512,14 +562,7 @@ function openModal(k) {
         </div>
         <h4 style="margin-top:14px">🗓 Registros de ventas / precios</h4>
         <div class="timeline">${timelineHTML(k)}</div>
-        <div class="inline-form">
-          <label>Registrar precio medio<input type="number" id="mpPrice" step="0.01" min="0" placeholder="${l ? l.p.toFixed(2) : '0.00'}"></label>
-          <label>Fecha<input type="date" id="mpDate" value="${today()}"></label>
-          <button class="btn primary" id="mpAdd">＋ Registrar precio</button>
-        </div>
-        <details style="margin-top:10px"><summary class="muted" style="cursor:pointer">Importar historial (una línea por fecha: AAAA-MM-DD;precio)</summary>
-          <div class="inline-form"><label>CSV<textarea id="csvHist" rows="3" placeholder="2025-01-10;2.50&#10;2025-02-01;3.10"></textarea></label>
-          <button class="btn" id="csvImport">Importar</button></div></details>
+        ${card && !card.se ? psaSectionHTML(k, card) : ''}
         <div class="detail-actions">
           ${card ? `<a class="btn primary" target="_blank" rel="noopener" href="${cardmarketUrl(card.se ? card.n : card.c)}">🏷 Ver precio en Cardmarket (€)</a>
                     <a class="btn" target="_blank" rel="noopener" href="${ebayUrl(card.se ? card.n : `${card.c} ${card.n}`)}">🛒 Ver en eBay</a>
@@ -612,22 +655,38 @@ function closeModal() {
 }
 
 // ---------------------------------------------------------------- acciones de colección
-function addCard(k, qty) {
-  let e = state.col.find(x => x.k === k);
-  if (e) e.q += (qty || 1);
+function addCard(k, opts) {
+  opts = opts || {};
+  const psa = opts.psa || null;
+  let e = state.col.find(x => x.k === k && (x.psa || null) === psa);
+  if (e) e.q += (opts.qty || 1);
   else {
     const r = cardByKey(k);
     let f = null;
     if (r.card && r.card.pr) f = r.card.pr.N ? 'N' : 'H';
-    state.col.push({ k, q: qty || 1, f, added: today() });
+    e = { id: uid(), k, q: opts.qty || 1, f, psa, added: today() };
+    state.col.push(e);
   }
   saveState(1);
   const nm = cardByKey(k);
-  toast(`🎒 Añadida: ${esc((nm.card || nm.custom || {}).n || 'carta')}`);
+  toast(`🎒 Añadida${psa ? ' (PSA ' + psa + ')' : ''}: ${esc((nm.card || nm.custom || {}).n || 'carta')}`);
 }
-function removeCard(k) {
-  const i = state.col.findIndex(x => x.k === k);
+function removeCard(id) {
+  const i = state.col.findIndex(x => String(x.id) === String(id));
   if (i >= 0) { state.col.splice(i, 1); saveState(1); toast('Carta quitada de la cartera'); }
+}
+// precio mostrado de una entrada: estimación PSA o último registro real
+function entryPrice(e, card) {
+  if (e && e.psa && card) return psaEstimate(card, e.psa, rawPriceOf(e.k, card));
+  const l = latest(e ? e.k : '');
+  return l ? l.p : null;
+}
+function priceEntryHTML(e, card) {
+  if (e && e.psa && card) {
+    const est = entryPrice(e, card);
+    return `<span class="price">PSA ${e.psa}: ${est != null ? fmtP(est) : '—'}</span>`;
+  }
+  return priceHTML(e.k);
 }
 
 // ---------------------------------------------------------------- render global + eventos
@@ -667,7 +726,7 @@ function bindEvents() {
   // clicks globales delegados
   document.body.addEventListener('click', ev => {
     const add = ev.target.closest('[data-add]');
-    if (add) { ev.stopPropagation(); addCard(add.dataset.add, 1); renderAll(); if (modalKey) openModal(modalKey); return; }
+    if (add) { ev.stopPropagation(); addCard(add.dataset.add); renderAll(); if (modalKey) openModal(modalKey); return; }
     const open = ev.target.closest('[data-open]');
     if (open) { openModal(open.dataset.open); return; }
     const delc = ev.target.closest('[data-delcustom]');
@@ -687,15 +746,16 @@ function bindEvents() {
     const act = ev.target.closest('[data-act]');
     if (act) {
       ev.stopPropagation();
-      let k = act.closest('[data-k]') ? act.closest('[data-k]').dataset.k : modalKey;
-      if (!k) return;
-      if (act.dataset.act === 'inc') addCard(k, 1);
+      const eid = act.dataset.eid;
+      const k = act.closest('[data-k]') ? act.closest('[data-k]').dataset.k : modalKey;
+      const entry = eid ? state.col.find(x => String(x.id) === String(eid))
+                        : state.col.find(x => x.k === k && !x.psa) || state.col.find(x => x.k === k);
+      if (act.dataset.act === 'inc') { if (entry) { entry.q++; saveState(1); } else if (k) addCard(k); }
       if (act.dataset.act === 'dec') {
-        const e = state.col.find(x => x.k === k);
-        if (e && e.q > 1) { e.q--; saveState(1); } else removeCard(k);
+        if (entry && entry.q > 1) { entry.q--; saveState(1); } else if (entry) removeCard(entry.id);
       }
       if (act.dataset.act === 'del') {
-        if (confirm('¿Quitar esta carta de tu cartera?')) removeCard(k);
+        if (entry && confirm('¿Quitar esta carta de tu cartera?')) removeCard(entry.id);
       }
       renderAll();
       if (modalKey && !$('#modal').hidden) { const mk = modalKey; closeModal(); openModal(mk); }
@@ -711,27 +771,16 @@ function bindEvents() {
   $('#modal').addEventListener('click', ev => { if (ev.target === $('#modal')) closeModal(); });
   document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && !$('#modal').hidden) closeModal(); });
 
-  // registrar precio manual
+  // calculadora PSA: elegir nota y guardar versión gradeada
   $('#modalBody').addEventListener('click', ev => {
-    if (ev.target.id === 'mpAdd') {
-      const p = parseFloat($('#mpPrice').value);
-      const d = $('#mpDate').value || today();
-      if (!p || p <= 0) { toast('Introduce un precio válido'); return; }
-      addPoint(modalKey, p, 'manual', d);
-      toast(`📅 Registrado ${fmtP(p)} el ${d}`);
+    const chip = ev.target.closest('[data-psa]');
+    if (chip) {
+      psaSel = parseFloat(chip.dataset.psa) || 10;
       const mk = modalKey; closeModal(); openModal(mk);
+      return;
     }
-    if (ev.target.id === 'csvImport') {
-      const lines = $('#csvHist').value.split(/\n+/).map(s => s.trim()).filter(Boolean);
-      let n = 0;
-      lines.forEach(ln => {
-        const m = ln.split(/[;,\t]/);
-        if (m.length >= 2 && /^\d{4}-\d{2}-\d{2}$/.test(m[0].trim())) {
-          const p = parseFloat(m[1]);
-          if (p > 0) { addPoint(modalKey, p, 'manual', m[0].trim()); n++; }
-        }
-      });
-      toast(n ? `📥 ${n} registros importados` : 'No se reconoció ningún formato AAAA-MM-DD;precio');
+    if (ev.target.id === 'btnSavePsa' && modalKey) {
+      addCard(modalKey, { psa: psaSel });
       const mk = modalKey; closeModal(); openModal(mk);
     }
   });
@@ -761,7 +810,7 @@ function bindEvents() {
     const k = 'c' + c.id;
     const p0 = parseFloat(fd.get('p0'));
     if (p0 > 0) addPoint(k, p0, 'manual', today());
-    addCard(k, Math.max(1, parseInt(fd.get('q')) || 1));
+    addCard(k, { qty: Math.max(1, parseInt(fd.get('q')) || 1) });
     ev.target.reset();
     renderAll();
   });
