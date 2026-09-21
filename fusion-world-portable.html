@@ -1350,12 +1350,13 @@ function psaSectionHTML(k, card) {
     <p class="muted" style="font-size:12px;margin-top:8px">EstimaciÃ³n orientativa con los multiplicadores actuales del mercado TCG (no es una valoraciÃ³n oficial). PSA no emite la nota 9.5 â€” es propia de BGS/SGC; se incluye como referencia.</p>`;
 }
 function openModal(k) {
+  const isNew = modalKey !== k;
   modalKey = k;
   const r = cardByKey(k);
   if (r.type === '?' || (!r.card && !r.custom)) { toast('Esa carta ya no existe en el catÃ¡logo'); return; }
   const card = r.card, custom = r.custom;
   const e = state.col.find(x => x.k === k && !x.psa) || state.col.find(x => x.k === k);
-  psaSel = (state.col.find(x => x.k === k && x.psa) || {}).psa || 10;
+  if (isNew) psaSel = (state.col.find(x => x.k === k && x.psa) || {}).psa || 10;
   const l = latest(k), pv = prev(k);
   const nm = card ? card.n : custom.n;
   const rc = (card && card.se) ? 'rc-Leader' : rarityClass((card || custom).r);
@@ -1609,7 +1610,7 @@ function bindEvents() {
     const chip = ev.target.closest('[data-psa]');
     if (chip) {
       psaSel = parseFloat(chip.dataset.psa) || 10;
-      const mk = modalKey; closeModal(); openModal(mk);
+      if (modalKey) openModal(modalKey);   // re-render sin cerrar: conserva la nota elegida
       return;
     }
     if (ev.target.id === 'btnSavePsa' && modalKey) {
