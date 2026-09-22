@@ -8,7 +8,12 @@ const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-const fmtP = n => '$' + (Math.round(n * 100) / 100).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtNum = n => (Math.round(n * 100) / 100).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Los precios internos están en dólares (fuente TCGplayer); fmtP los muestra en la moneda elegida.
+function fmtP(n) {
+  if (!isFinite(n)) return '—';
+  return window.__CUR && window.__CUR.cur === 'EUR' ? fmtNum(n * window.__CUR.rate) + ' €' : '$' + fmtNum(n);
+}
 const today = () => new Date().toISOString().slice(0, 10);
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const img = i => `https://tcgplayer-cdn.tcgplayer.com/product/${i}_200w.jpg`;
@@ -64,6 +69,45 @@ const LS = { col: 'fw_col_v1', hist: 'fw_hist_v1', custom: 'fw_custom_v1' }; // 
 const ACCOUNTS_KEY = 'fw_accounts_v1', SESSION_KEY = 'fw_session_v1';
 function load(k, fb) { try { return JSON.parse(localStorage.getItem(k)) || fb; } catch (e) { return fb; } }
 function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { toast('⚠️ No se pudo guardar (almacenamiento lleno)'); } }
+
+// preferencia de moneda (global del navegador): los datos siguen estando en USD
+window.__CUR = load('fw_cur_v1', { cur: 'USD', rate: 0.92, rateDate: null, auto: true });
+function saveCur() { save('fw_cur_v1', window.__CUR); }
+function setCurrency(cur) {
+  window.__CUR.cur = cur;
+  saveCur(); updateCurButtons(); renderAll();
+  if (modalKey && !$('#modal').hidden) { const mk = modalKey; closeModal(); openModal(mk); }
+  toast(cur === 'EUR' ? '💶 Precios en euros' : '💵 Precios en dólares');
+}
+async function fetchRate(manual) {
+  if (manual) toast('💱 Buscando cambio actual…');
+  try {
+    const r = await fetch('https://api.frankfurter.app/latest?from=USD&to=EUR').then(x => x.json());
+    if (r && r.rates && r.rates.EUR) {
+      window.__CUR.rate = r.rates.EUR;
+      window.__CUR.rateDate = r.date;
+      saveCur(); updateCurButtons(); renderAll();
+      if (modalKey && !$('#modal').hidden) { const mk = modalKey; closeModal(); openModal(mk); }
+      if (manual) toast('💱 Cambio actualizado: 1 $ = ' + r.rates.EUR + ' €');
+    } else if (manual) toast('No se pudo obtener el cambio ahora mismo.');
+  } catch (e) { if (manual) toast('No se pudo obtener el cambio (sin conexión).'); }
+}
+function updateCurButtons() {
+  const u = $('#curUSD'), eu = $('#curEUR'), ct = $('#curToggle');
+  if (u) u.classList.toggle('sel', window.__CUR.cur === 'USD');
+  if (eu) eu.classList.toggle('sel', window.__CUR.cur === 'EUR');
+  if (ct) ct.textContent = window.__CUR.cur === 'EUR' ? '💱 €' : '💱 $';
+  const info = $('#curInfo');
+  if (info) info.innerHTML = `Cambio actual: <b>1 $ = ${window.__CUR.rate} €</b>${window.__CUR.rateDate ? ' (BCE, ' + esc(window.__CUR.rateDate) + ')' : ''}. Los precios originales son en dólares (TCGplayer); la conversión a € es aproximada.`;
+  const rt = $('#curRate');
+  if (rt && document.activeElement !== rt) rt.value = window.__CUR.rate;
+}
+function maybeFetchRate() {
+  const CUR = window.__CUR;
+  if (!CUR.auto) return;
+  const stale = !CUR.rateDate || (Date.now() - new Date(CUR.rateDate + 'T12:00:00')) > 86400000;
+  if (stale) fetchRate(false);
+}
 
 const state = {
   user: null, prefix: null,    // prefix null = invitado → usa clases fw_* originales
@@ -850,6 +894,22 @@ function bindEvents() {
     }
   });
 
+  // moneda
+  $('#curToggle').addEventListener('click', () => setCurrency(window.__CUR.cur === 'EUR' ? 'USD' : 'EUR'));
+  $('#curUSD').addEventListener('click', () => setCurrency('USD'));
+  $('#curEUR').addEventListener('click', () => setCurrency('EUR'));
+  $('#curFetch').addEventListener('click', () => fetchRate(true));
+  $('#curSetRate').addEventListener('click', () => {
+    const v = parseFloat($('#curRate').value);
+    if (!v || v < 0.1 || v > 5) { toast('Introduce un cambio razonable (0,1 – 5)'); return; }
+    window.__CUR.rate = v;
+    window.__CUR.rateDate = today();
+    window.__CUR.auto = false;
+    saveCur(); updateCurButtons(); renderAll();
+    if (modalKey && !$('#modal').hidden) { const mk = modalKey; closeModal(); openModal(mk); }
+    toast('💱 Cambio fijado a mano: 1 $ = ' + v + ' €');
+  });
+
   // escáner
   $('#btnCamStart').addEventListener('click', () => window.FWScan.startCamera());
   $('#btnCamShot').addEventListener('click', () => window.FWScan.capture());
@@ -872,6 +932,8 @@ function init() {
   bindEvents();
   bindAuth();
   window.FWScan.initUI();
+  updateCurButtons();
+  maybeFetchRate();
   const sess = load(SESSION_KEY, null);
   if (sess && getAccounts()[sess]) enterApp(sess);
   else showAuth();
