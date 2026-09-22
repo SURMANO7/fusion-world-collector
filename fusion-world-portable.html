@@ -929,16 +929,26 @@ function setCurrency(cur) {
 }
 async function fetchRate(manual) {
   if (manual) toast('ðŸ’± Buscando cambio actualâ€¦');
-  try {
-    const r = await fetch('https://api.frankfurter.app/latest?from=USD&to=EUR').then(x => x.json());
-    if (r && r.rates && r.rates.EUR) {
-      window.__CUR.rate = r.rates.EUR;
-      window.__CUR.rateDate = r.date;
-      saveCur(); updateCurButtons(); renderAll();
-      if (modalKey && !$('#modal').hidden) { const mk = modalKey; closeModal(); openModal(mk); }
-      if (manual) toast('ðŸ’± Cambio actualizado: 1 $ = ' + r.rates.EUR + ' â‚¬');
-    } else if (manual) toast('No se pudo obtener el cambio ahora mismo.');
-  } catch (e) { if (manual) toast('No se pudo obtener el cambio (sin conexiÃ³n).'); }
+  const fuentes = [
+    { url: 'https://open.er-api.com/v6/latest/USD', lee: j => (j && j.rates) ? j.rates.EUR : null },
+    { url: 'https://api.frankfurter.app/latest?from=USD&to=EUR', lee: j => (j && j.rates) ? j.rates.EUR : null }
+  ];
+  for (const f of fuentes) {
+    try {
+      const j = await fetch(f.url).then(x => x.json());
+      const eur = f.lee(j);
+      if (eur && isFinite(eur) && eur > 0.1 && eur < 5) {
+        window.__CUR.rate = Math.round(eur * 10000) / 10000;
+        window.__CUR.rateDate = today();
+        saveCur(); updateCurButtons(); renderAll();
+        if (modalKey && !$('#modal').hidden) { const mk = modalKey; closeModal(); openModal(mk); }
+        if (manual) toast('ðŸ’± Cambio actualizado: 1 $ = ' + window.__CUR.rate + ' â‚¬');
+        return true;
+      }
+    } catch (e) { /* probamos la siguiente fuente */ }
+  }
+  if (manual) toast('No se pudo obtener el cambio (sin conexiÃ³n). Puedes fijarlo a mano en Ajustes.');
+  return false;
 }
 function updateCurButtons() {
   const u = $('#curUSD'), eu = $('#curEUR'), ct = $('#curToggle');
