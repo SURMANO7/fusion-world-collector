@@ -109,8 +109,6 @@ function updateCurButtons() {
   if (ct) ct.textContent = window.__CUR.cur === 'EUR' ? '💱 €' : '💱 $';
   const info = $('#curInfo');
   if (info) info.innerHTML = `Cambio actual: <b>1 $ = ${window.__CUR.rate} €</b>${window.__CUR.rateDate ? ' (BCE, ' + esc(window.__CUR.rateDate) + ')' : ''}. Los precios originales son en dólares (TCGplayer); la conversión a € es aproximada.`;
-  const rt = $('#curRate');
-  if (rt && document.activeElement !== rt) rt.value = window.__CUR.rate;
 }
 function maybeFetchRate() {
   const CUR = window.__CUR;
@@ -909,16 +907,6 @@ function bindEvents() {
   $('#curUSD').addEventListener('click', () => setCurrency('USD'));
   $('#curEUR').addEventListener('click', () => setCurrency('EUR'));
   $('#curFetch').addEventListener('click', () => fetchRate(true));
-  $('#curSetRate').addEventListener('click', () => {
-    const v = parseFloat($('#curRate').value);
-    if (!v || v < 0.1 || v > 5) { toast('Introduce un cambio razonable (0,1 – 5)'); return; }
-    window.__CUR.rate = v;
-    window.__CUR.rateDate = today();
-    window.__CUR.auto = false;
-    saveCur(); updateCurButtons(); renderAll();
-    if (modalKey && !$('#modal').hidden) { const mk = modalKey; closeModal(); openModal(mk); }
-    toast('💱 Cambio fijado a mano: 1 $ = ' + v + ' €');
-  });
 
   // escáner
   $('#btnCamStart').addEventListener('click', () => window.FWScan.startCamera());

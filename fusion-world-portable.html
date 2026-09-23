@@ -500,12 +500,6 @@ main { max-width: 1280px; margin: 0 auto; padding: 22px; }
         <button id="curFetch" class="btn small">ðŸ”„ Obtener cambio actual</button>
       </div>
       <p class="muted" id="curInfo"></p>
-      <div class="btn-row" style="align-items:center">
-        <label style="display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px">Cambio manual (1 $ = X â‚¬):
-          <input id="curRate" type="number" step="0.0001" min="0.1" max="5" style="width:110px;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px">
-        </label>
-        <button id="curSetRate" class="btn small">Fijar cambio</button>
-      </div>
       <h4>ðŸ’¾ Copia de seguridad</h4>
       <div class="btn-row">
         <button id="btnExport" class="btn">â¬‡ï¸ Exportar cartera (JSON)</button>
@@ -957,8 +951,6 @@ function updateCurButtons() {
   if (ct) ct.textContent = window.__CUR.cur === 'EUR' ? 'ðŸ’± â‚¬' : 'ðŸ’± $';
   const info = $('#curInfo');
   if (info) info.innerHTML = `Cambio actual: <b>1 $ = ${window.__CUR.rate} â‚¬</b>${window.__CUR.rateDate ? ' (BCE, ' + esc(window.__CUR.rateDate) + ')' : ''}. Los precios originales son en dÃ³lares (TCGplayer); la conversiÃ³n a â‚¬ es aproximada.`;
-  const rt = $('#curRate');
-  if (rt && document.activeElement !== rt) rt.value = window.__CUR.rate;
 }
 function maybeFetchRate() {
   const CUR = window.__CUR;
@@ -1757,16 +1749,6 @@ function bindEvents() {
   $('#curUSD').addEventListener('click', () => setCurrency('USD'));
   $('#curEUR').addEventListener('click', () => setCurrency('EUR'));
   $('#curFetch').addEventListener('click', () => fetchRate(true));
-  $('#curSetRate').addEventListener('click', () => {
-    const v = parseFloat($('#curRate').value);
-    if (!v || v < 0.1 || v > 5) { toast('Introduce un cambio razonable (0,1 â€“ 5)'); return; }
-    window.__CUR.rate = v;
-    window.__CUR.rateDate = today();
-    window.__CUR.auto = false;
-    saveCur(); updateCurButtons(); renderAll();
-    if (modalKey && !$('#modal').hidden) { const mk = modalKey; closeModal(); openModal(mk); }
-    toast('ðŸ’± Cambio fijado a mano: 1 $ = ' + v + ' â‚¬');
-  });
 
   // escÃ¡ner
   $('#btnCamStart').addEventListener('click', () => window.FWScan.startCamera());
